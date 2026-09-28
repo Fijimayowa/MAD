@@ -2,24 +2,27 @@ import '../models/movie.dart';
 
 final List<Movie> sampleMovies = [
   Movie(
-    title: 'Inception',
-    posterPath: 'assets/images/inception.jpg',
-    cast: ['Leonardo DiCaprio', 'Joseph Gordon-Levitt', 'Elliot Page'],
-    synopsis:
-        'A thief who steals corporate secrets through dream-sharing technology is given the inverse task of planting an idea into the mind of a CEO.',
+    title: 'The Empire Strikes Back',
+    posterPath: 'assets/images/empire_strikes_back.jpg',
+    cast: ['Mark Hamill', 'Harrison Ford', 'Carrie Fisher'],
+    synopsis: 'After the Rebels are driven from their hidden base, Luke Skywalker begins Jedi training while his friends are pursued across the galaxy by the Empire.',
   ),
   Movie(
-    title: 'Interstellar',
-    posterPath: 'assets/images/interstellar.jpg',
-    cast: ['Matthew McConaughey', 'Anne Hathaway', 'Jessica Chastain'],
-    synopsis:
-        'A team of explorers travel through a wormhole in space in an attempt to ensure humanity\'s survival.',
+    title: 'The Avengers',
+    posterPath: 'assets/images/avengers.jpg',
+    cast: ['Robert Downey Jr.', 'Chris Evans', 'Scarlett Johansson'],
+    synopsis: 'Earth\'s mightiest heroes must learn to work together when Loki and an alien army threaten to take over the world.',
   ),
   Movie(
-    title: 'The Dark Knight',
-    posterPath: 'assets/images/dark_knight.jpg',
-    cast: ['Christian Bale', 'Heath Ledger', 'Aaron Eckhart'],
-    synopsis:
-        'When the menace known as the Joker wreaks havoc on Gotham, Batman must accept one of the greatest psychological tests of his ability to fight injustice.',
+    title: 'Moonlight',
+    posterPath: 'assets/images/moonlight.jpg',
+    cast: ['Trevante Rhodes', 'André Holland', 'Janelle Monáe'],
+    synopsis: 'A young man growing up in Miami is shown at three stages of his life as he searches for his identity and a place to belong.',
+  ),
+  Movie(
+    title: 'Jaws',
+    posterPath: 'assets/images/jaws.jpg',
+    cast: ['Roy Scheider', 'Robert Shaw', 'Richard Dreyfuss'],
+    synopsis: 'When a giant shark begins attacking swimmers at a beach town, the police chief, a marine scientist, and a grizzled fisherman set out to hunt it down.',
   ),
 ];

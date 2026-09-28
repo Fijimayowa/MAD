@@ -1,16 +1,36 @@
 import 'package:flutter/material.dart';
 
-import '../models/movie.dart';
 import '../data/movies_data.dart';
 import 'details_screen.dart';
+import 'watchlist_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Movies')),
+      appBar: AppBar(
+        title: const Text('Movies'),
+        actions: [
+          IconButton(
+            tooltip: 'View Watchlist',
+            icon: const Icon(Icons.bookmarks),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const WatchlistScreen()),
+              );
+              setState(() {}); // refresh icons after returning
+            },
+          ),
+        ],
+      ),
       body: ListView.builder(
         itemCount: sampleMovies.length,
         itemBuilder: (context, index) {
@@ -23,14 +43,17 @@ class HomeScreen extends StatelessWidget {
                 fit: BoxFit.cover,
               ),
               title: Text(movie.title),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.push(
+              trailing: movie.isWatchlisted
+                  ? const Icon(Icons.bookmark, color: Colors.amber)
+                  : const Icon(Icons.chevron_right),
+              onTap: () async {
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => DetailsScreen(movie: movie),
                   ),
                 );
+                setState(() {});
               },
             ),
           );
