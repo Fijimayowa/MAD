@@ -16,7 +16,7 @@ class _MyAppState extends State<MyApp> {
 
   void changeTheme(ThemeMode mode) {
     setState(() {
-      _themeMode = mode;
+      _themeMode = mode
     });
   }
   
