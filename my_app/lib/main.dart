@@ -1,168 +1,176 @@
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+// BLOCK 1: Import Flutter's Material widgets and launch the app.
+void main() => runApp(const CounterApp());
 
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  ThemeMode _themeMode = ThemeMode.system;
-
-  void changeTheme(ThemeMode mode) {
-    setState(() {
-      _themeMode = mode;
-    });
-  }
-  
+// BLOCK 2: This app shell does not change, so it is a StatelessWidget.
+class CounterApp extends StatelessWidget {
+  const CounterApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(brightness: Brightness.light),
-      darkTheme: ThemeData(brightness: Brightness.dark),
-      themeMode: _themeMode,
-      home: Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Builder(
-                builder: (context) {
-                  final isDarkMode =
-                      Theme.of(context).brightness == Brightness.dark;
-                  return Container(
-                    width: 220,
-                    height: 64,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isDarkMode ? Colors.teal : Colors.amber,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.bolt, color: Colors.black87),
-                        SizedBox(width: 8),
-                        Text(
-                          'Status',
-                          style: TextStyle(
-                            color: Colors.black87,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => changeTheme(ThemeMode.light),
-                child: const Text('Light Theme'),
-              ),
-              ElevatedButton(
-                onPressed: () => changeTheme(ThemeMode.dark),
-                child: const Text('Dark Theme'),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: CounterPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+// BLOCK 3: This screen changes after user interactions, so it is stateful.
+class CounterPage extends StatefulWidget {
+  const CounterPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<CounterPage> createState() => _CounterPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _CounterPageState extends State<CounterPage> {
+  // BLOCK 4: State fields determine what the user sees at any moment.
+  static const int _min = 10;
+  static const int _max = 150;
 
-  void _incrementCounter() {
+  int _counter = 40;
+  int _increment = 7;
+  final List<int> _history = [];
+  final TextEditingController _incrementController = TextEditingController(
+    text: '7',
+  );
+
+  @override
+  void dispose() {
+    // Controllers use resources; dispose them when this screen is removed.
+    _incrementController.dispose();
+    super.dispose();
+  }
+
+  // BLOCK 5: Helper methods enforce rules before they change UI state.
+  bool _isValidValue(int value) => value >= _min && value <= _max;
+
+  // Activity 05 color-feedback rule, driven by the same counter state.
+  Color _counterColor() {
+    if (_counter == _min) return Colors.red;
+    if (_counter > 90) return Colors.green;
+    return Colors.black;
+  }
+
+  void _showMessage(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars(); // Avoid a queue of stale messages.
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _moveTo(int nextValue) {
+    // Nothing would change, so no history entry and no message.
+    if (nextValue == _counter) return;
+
+    // Reject the action before changing state or creating a history record.
+    if (!_isValidValue(nextValue)) {
+      _showMessage(
+        nextValue > _max
+            ? 'Can\'t go above the maximum of $_max.'
+            : 'Can\'t go below the minimum of $_min.',
+      );
+      return;
+    }
+
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _history.add(_counter); // Save only the state that can be restored.
+      _counter = nextValue;
     });
+  }
+
+  void _readIncrement(String input) {
+    final text = input.trim();
+    final value = int.tryParse(text);
+
+    if (value == null || value <= 0) {
+      final reason = text.isEmpty
+          ? 'The field is empty.'
+          : '"$text" isn\'t a positive whole number.';
+      _showMessage(
+        '$reason Use a whole number like 7. Still using $_increment.',
+      );
+      return; // Keep the last valid increment unchanged.
+    }
+    setState(() => _increment = value);
+  }
+
+  void _undo() {
+    if (_history.isEmpty) {
+      _showMessage('Nothing to undo yet.');
+      return;
+    }
+    setState(() => _counter = _history.removeLast());
+  }
+
+  void _reset() {
+    if (_counter != _min) _moveTo(_min);
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    // BLOCK 6: Build reads state and connects widgets to user actions.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      appBar: AppBar(title: const Text('Activity 05 Counter')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('You have pushed the button this many times:'),
             Text(
               '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.displayLarge
+                  ?.copyWith(color: _counterColor()),
+            ),
+            Slider(
+              value: _counter.toDouble(),
+              min: 10,
+              max: 150,
+              divisions: 140,
+              // Slider moves change the counter, so they go through _moveTo()
+              // and are recorded in history like any other action.
+              onChanged: (value) => _moveTo(value.round()),
+            ),
+            TextField(
+              controller: _incrementController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Increment amount (starts at 7)',
+                // UI improvement: show which increment is actually active.
+                helperText: 'Currently adding/subtracting $_increment',
+              ),
+              onChanged: _readIncrement,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: () => _moveTo(_counter - _increment),
+                  child: const Text('Decrease'),
+                ),
+                ElevatedButton(
+                  onPressed: () => _moveTo(_counter + _increment),
+                  child: const Text('Increase'),
+                ),
+                OutlinedButton(
+                  onPressed: _reset,
+                  child: const Text('Reset to 10'),
+                ),
+                OutlinedButton(onPressed: _undo, child: const Text('Undo')),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Text(
+              _history.isEmpty
+                  ? 'History: none'
+                  : 'History: ${_history.join(', ')}',
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
       ),
     );
   }
