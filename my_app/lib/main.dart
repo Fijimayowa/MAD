@@ -19,6 +19,7 @@ class _MyAppState extends State<MyApp> {
       _themeMode = mode;
     });
   }
+  
 
   @override
   Widget build(BuildContext context) {
