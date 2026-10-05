@@ -1,504 +1,443 @@
-import 'dart:math';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-void main() => runApp(const SmileyApp());
+void main() => runApp(const PetApp());
 
-// ---------------------------------------------------------------------------
-// Model
-// ---------------------------------------------------------------------------
-
-enum FaceType { classic, sleepy, surprised }
-
-extension FaceTypeLabel on FaceType {
-  String get label => switch (this) {
-    FaceType.classic => 'Classic',
-    FaceType.sleepy => 'Sleepy',
-    FaceType.surprised => 'Surprised',
-  };
-}
-
-/// Face colour for each mood band (Level 2).
-Color moodColor(double mood) {
-  if (mood < 0.35) return const Color(0xFF7FB8E6); // cool blue
-  if (mood <= 0.7) return const Color(0xFFFFD93B); // yellow
-  return const Color(0xFFFF9F43); // warm orange
-}
-
-String moodLabel(double mood) {
-  if (mood < 0.35) return 'Sad';
-  if (mood <= 0.7) return 'Neutral';
-  return 'Happy';
-}
-
-/// One snapshot of everything the user can change (Bonus: undo stack).
-class FaceConfig {
-  final double mood;
-  final Color? customColor; // set by long-press, cleared when slider moves
-  final FaceType type;
-  final bool hat;
-  final bool glasses;
-  final bool mustache;
-
-  const FaceConfig({
-    this.mood = 0.85,
-    this.customColor,
-    this.type = FaceType.classic,
-    this.hat = false,
-    this.glasses = false,
-    this.mustache = false,
-  });
-
-  Color get faceColor => customColor ?? moodColor(mood);
-
-  FaceConfig copyWith({
-    double? mood,
-    Color? customColor,
-    bool clearColor = false,
-    FaceType? type,
-    bool? hat,
-    bool? glasses,
-    bool? mustache,
-  }) {
-    return FaceConfig(
-      mood: mood ?? this.mood,
-      customColor: clearColor ? null : (customColor ?? this.customColor),
-      type: type ?? this.type,
-      hat: hat ?? this.hat,
-      glasses: glasses ?? this.glasses,
-      mustache: mustache ?? this.mustache,
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Painter
-// ---------------------------------------------------------------------------
-
-class SmileyPainter extends CustomPainter {
-  final double mood;
-  final Color faceColor;
-  final FaceType type;
-  final bool hat;
-  final bool glasses;
-  final bool mustache;
-
-  const SmileyPainter({
-    required this.mood,
-    required this.faceColor,
-    required this.type,
-    this.hat = false,
-    this.glasses = false,
-    this.mustache = false,
-  });
-
-  static const Color _ink = Color(0xFF3E2723);
-
-  /// Maps mood (0..1) to mouth curvature: -1 = deep frown, 0 = flat, 1 = big smile.
-  static double _curve(double mood) {
-    if (mood < 0.35) return -(0.35 - mood) / 0.35; // frown
-    if (mood <= 0.7)
-      return 0.05 + (mood - 0.35) / 0.35 * 0.35; // neutral / soft smile
-    return 0.5 + (mood - 0.7) / 0.3 * 0.5; // big smile
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = size.center(Offset.zero);
-    final cx = center.dx;
-    final cy = center.dy;
-    // Everything below is a fraction of the radius, so it scales to any size.
-    final r = min(size.width, size.height) / 2 * 0.62;
-
-    // Face: fill + border
-    canvas.drawCircle(center, r, Paint()..color = faceColor);
-    canvas.drawCircle(
-      center,
-      r,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = r * 0.06
-        ..color = _ink,
-    );
-
-    // Eyes: symmetric offsets from the face centre
-    final eyeDx = r * 0.38;
-    final eyeY = cy - r * 0.22;
-    final leftEye = Offset(cx - eyeDx, eyeY);
-    final rightEye = Offset(cx + eyeDx, eyeY);
-    _drawEye(canvas, leftEye, r);
-    _drawEye(canvas, rightEye, r);
-
-    _drawMouth(canvas, cx, cy, r);
-
-    if (mustache) _drawMustache(canvas, cx, cy, r);
-    if (glasses) _drawGlasses(canvas, leftEye, rightEye, r);
-    if (hat) _drawHat(canvas, cx, cy, r);
-  }
-
-  void _drawEye(Canvas canvas, Offset e, double r) {
-    final ink = Paint()..color = _ink;
-    final line = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = r * 0.05
-      ..strokeCap = StrokeCap.round
-      ..color = _ink;
-
-    switch (type) {
-      case FaceType.classic:
-        canvas.drawCircle(e, r * 0.09, ink);
-      case FaceType.sleepy:
-        // closed eye: a small downward arc
-        canvas.drawArc(
-          Rect.fromCenter(center: e, width: r * 0.32, height: r * 0.2),
-          0,
-          pi,
-          false,
-          line,
-        );
-      case FaceType.surprised:
-        canvas.drawCircle(e, r * 0.17, Paint()..color = Colors.white);
-        canvas.drawCircle(e, r * 0.17, line);
-        canvas.drawCircle(e, r * 0.07, ink);
-    }
-  }
-
-  void _drawMouth(Canvas canvas, double cx, double cy, double r) {
-    final line = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = r * 0.06
-      ..strokeCap = StrokeCap.round
-      ..color = _ink;
-
-    if (type == FaceType.surprised) {
-      final rect = Rect.fromCenter(
-        center: Offset(cx, cy + r * 0.45),
-        width: r * (0.22 + 0.12 * mood),
-        height: r * (0.3 + 0.15 * mood),
-      );
-      canvas.drawOval(rect, Paint()..color = const Color(0xFF6D1B1B));
-      canvas.drawOval(rect, line);
-      return;
-    }
-
-    var curve = _curve(mood);
-    if (type == FaceType.sleepy) curve = 0.2 + 0.2 * curve; // always soft
-    final open = type == FaceType.classic && mood > 0.7;
-
-    final h = max(r * 0.4 * curve.abs(), r * 0.02);
-    final baseline = cy + r * (0.3 + 0.25 * max(0.0, -curve));
-    final rect = Rect.fromCenter(
-      center: Offset(cx, baseline),
-      width: r * 0.9,
-      height: h * 2,
-    );
-
-    if (curve >= 0) {
-      // smile: lower half of the ellipse
-      if (open) {
-        canvas.drawArc(
-          rect,
-          0,
-          pi,
-          true,
-          Paint()..color = const Color(0xFF8B1E2D),
-        );
-      }
-      canvas.drawArc(rect, 0, pi, open, line);
-    } else {
-      // frown: upper half of the ellipse
-      canvas.drawArc(rect, pi, pi, false, line);
-    }
-  }
-
-  void _drawGlasses(Canvas canvas, Offset left, Offset right, double r) {
-    final p = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = r * 0.05
-      ..color = Colors.black87;
-    final lens = r * 0.25;
-    canvas.drawCircle(left, lens, p);
-    canvas.drawCircle(right, lens, p);
-    canvas.drawLine(
-      Offset(left.dx + lens, left.dy),
-      Offset(right.dx - lens, right.dy),
-      p,
-    );
-  }
-
-  void _drawMustache(Canvas canvas, double cx, double cy, double r) {
-    final path = Path()
-      ..moveTo(cx, cy + r * 0.1)
-      ..quadraticBezierTo(
-        cx - r * 0.2,
-        cy - r * 0.02,
-        cx - r * 0.45,
-        cy + r * 0.12,
-      )
-      ..quadraticBezierTo(cx - r * 0.25, cy + r * 0.25, cx, cy + r * 0.17)
-      ..quadraticBezierTo(
-        cx + r * 0.25,
-        cy + r * 0.25,
-        cx + r * 0.45,
-        cy + r * 0.12,
-      )
-      ..quadraticBezierTo(cx + r * 0.2, cy - r * 0.02, cx, cy + r * 0.1)
-      ..close();
-    canvas.drawPath(path, Paint()..color = const Color(0xFF4E342E));
-  }
-
-  void _drawHat(Canvas canvas, double cx, double cy, double r) {
-    final hatColor = Paint()..color = const Color(0xFF263238);
-    final brimY = cy - r * 0.95;
-    // crown
-    final crown = Rect.fromLTRB(
-      cx - r * 0.47,
-      brimY - r * 0.56,
-      cx + r * 0.47,
-      brimY,
-    );
-    canvas.drawRect(crown, hatColor);
-    // red band
-    canvas.drawRect(
-      Rect.fromLTRB(
-        crown.left,
-        brimY - r * 0.16,
-        crown.right,
-        brimY - r * 0.04,
-      ),
-      Paint()..color = const Color(0xFFC62828),
-    );
-    // brim
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(cx, brimY),
-          width: r * 1.5,
-          height: r * 0.12,
-        ),
-        Radius.circular(r * 0.06),
-      ),
-      hatColor,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant SmileyPainter old) {
-    return old.mood != mood ||
-        old.faceColor != faceColor ||
-        old.type != type ||
-        old.hat != hat ||
-        old.glasses != glasses ||
-        old.mustache != mustache;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// App
-// ---------------------------------------------------------------------------
-
-class SmileyApp extends StatelessWidget {
-  const SmileyApp({super.key});
+class PetApp extends StatelessWidget {
+  const PetApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Smiley Painter',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
-      ),
-      home: const SmileyScreen(),
+      title: 'Digital Pet',
+      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+      home: const PetScreen(),
     );
   }
 }
 
-class SmileyScreen extends StatefulWidget {
-  const SmileyScreen({super.key});
+class PetScreen extends StatefulWidget {
+  // Intervals are constructor params so tests can shorten them.
+  // Production values: 30 seconds and 3 minutes.
+  const PetScreen({
+    super.key,
+    this.hungerInterval = const Duration(seconds: 30),
+    this.winDuration = const Duration(minutes: 3),
+  });
+
+  final Duration hungerInterval;
+  final Duration winDuration;
 
   @override
-  State<SmileyScreen> createState() => _SmileyScreenState();
+  State<PetScreen> createState() => _PetScreenState();
 }
 
-class _SmileyScreenState extends State<SmileyScreen> {
-  FaceConfig _config = const FaceConfig();
-  final List<FaceConfig> _undoStack = [];
-  final Random _random = Random();
+class _PetScreenState extends State<PetScreen> {
+  // ---- Game state ----
+  String _petName = 'Pip';
+  int _happiness = 50;
+  int _hunger = 50;
+  int _energy = 70;
+  bool _gameOver = false;
+  bool _hasWon = false;
+  String _feedback = 'Choose an action to see which pet values change.';
 
-  /// Save the current configuration before any change (Bonus).
-  void _saveForUndo() => _undoStack.add(_config);
+  // ---- Timers and short-lived animation state ----
+  Timer? _hungerTimer;
+  Timer? _highMoodTimer;
+  Timer? _bounceTimer;
+  Timer? _reactionTimer;
+  bool _bouncing = false;
+  String? _reaction;
 
-  void _undo() {
-    if (_undoStack.isEmpty) return;
-    setState(() => _config = _undoStack.removeLast());
-    _showMessage('Undid last change');
+  final TextEditingController _nameController = TextEditingController(
+    text: 'Pip',
+  );
+
+  // ---- Rules ----
+  int _clampMeter(int value) => value.clamp(0, 100).toInt();
+
+  bool get _finished => _gameOver || _hasWon;
+
+  String get _moodLabel {
+    if (_happiness > 70) return 'Happy';
+    if (_happiness >= 30) return 'Neutral';
+    return 'Unhappy';
   }
 
-  /// One message at a time: clear old ones before showing the new one (Level 4).
-  void _showMessage(String text) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.clearSnackBars();
-    messenger.showSnackBar(
-      SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
-    );
+  Color get _moodColor {
+    if (_happiness > 70) return Colors.green;
+    if (_happiness >= 30) return Colors.yellow;
+    return Colors.red;
   }
 
-  void _selectFace(FaceType type) {
-    if (type == _config.type) return;
-    _saveForUndo();
-    setState(() => _config = _config.copyWith(type: type));
+  double get _petScale => _happiness > 70
+      ? 1.06
+      : _happiness < 30
+      ? 0.94
+      : 1.0;
+
+  // Derived, never stored, so it can't drift out of sync.
+  String get _petMessage {
+    if (_gameOver) return 'I need a rest.';
+    if (_hasWon) return 'Best day ever!';
+    if (_hunger > 80) return "I'm starving!";
+    if (_happiness <= 30) return 'Play with me?';
+    if (_energy < 20) return 'So sleepy...';
+    return "Hi, I'm $_petName!";
   }
 
-  void _cycleFace() {
-    final next =
-        FaceType.values[(_config.type.index + 1) % FaceType.values.length];
-    _saveForUndo();
-    setState(() => _config = _config.copyWith(type: next));
-    _showMessage('Switched to ${next.label} face');
+  @override
+  void initState() {
+    super.initState();
+    _startHungerTimer();
   }
 
-  void _randomize() {
-    final mood = _random.nextDouble();
-    final color = HSLColor.fromAHSL(
-      1,
-      _random.nextDouble() * 360,
-      0.7,
-      0.65,
-    ).toColor();
-    _saveForUndo();
-    setState(() => _config = _config.copyWith(mood: mood, customColor: color));
-    _showMessage(
-      'Randomized: mood ${(mood * 100).round()}% (${moodLabel(mood)}), new face color',
-    );
+  void _startHungerTimer() {
+    _hungerTimer?.cancel(); // guarantees exactly one hunger timer
+    _hungerTimer = Timer.periodic(widget.hungerInterval, (timer) {
+      if (!mounted || _finished) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        if (_hunger + 5 > 100) {
+          _hunger = 100;
+          _happiness = _clampMeter(_happiness - 20);
+        } else {
+          _hunger += 5;
+        }
+      });
+      _updateOutcome();
+    });
   }
 
-  void _toggle({bool? hat, bool? glasses, bool? mustache}) {
-    _saveForUndo();
-    setState(
-      () => _config = _config.copyWith(
-        hat: hat,
-        glasses: glasses,
-        mustache: mustache,
-      ),
-    );
+  void _updateOutcome() {
+    if (_finished) return;
+
+    if (_hunger == 100 && _happiness <= 10) {
+      _highMoodTimer?.cancel();
+      _highMoodTimer = null;
+      _hungerTimer?.cancel();
+      setState(() => _gameOver = true);
+      return;
+    }
+
+    if (_happiness <= 80) {
+      _highMoodTimer?.cancel();
+      _highMoodTimer = null;
+      return;
+    }
+
+    _highMoodTimer ??= Timer(widget.winDuration, () {
+      _highMoodTimer = null;
+      if (!mounted || _gameOver || _happiness <= 80) return;
+      _hungerTimer?.cancel();
+      setState(() => _hasWon = true);
+    });
   }
 
+  // ---- Actions ----
+  void _play() {
+    if (_finished) return;
+    if (_energy < 10) {
+      setState(() => _feedback = 'Too tired to play. Try Rest first.');
+      _react('💤');
+      return;
+    }
+    final nextHappiness = _clampMeter(_happiness + 15);
+    final nextEnergy = _clampMeter(_energy - 15);
+    final nextHunger = _clampMeter(_hunger + 10);
+    setState(() {
+      _happiness = nextHappiness;
+      _energy = nextEnergy;
+      _hunger = nextHunger;
+      _feedback = 'Play: happiness +15, energy -15, hunger +10.';
+    });
+    _react('🎾');
+    _updateOutcome();
+  }
+
+  void _feed() {
+    if (_finished) return;
+    final nextHunger = _clampMeter(_hunger - 10);
+    final change = nextHunger < 30 ? -20 : 10; // overfed pets get cranky
+    final nextHappiness = _clampMeter(_happiness + change);
+    setState(() {
+      _hunger = nextHunger;
+      _happiness = nextHappiness;
+      _feedback = change > 0
+          ? 'Feed: hunger -10, happiness +10.'
+          : 'Feed: hunger -10, but too full! Happiness -20.';
+    });
+    _react('🍖');
+    _updateOutcome();
+  }
+
+  void _rest() {
+    if (_finished) return;
+    final nextEnergy = _clampMeter(_energy + 25);
+    final nextHunger = _clampMeter(_hunger + 5);
+    setState(() {
+      _energy = nextEnergy;
+      _hunger = nextHunger;
+      _feedback = 'Rest: energy +25, hunger +5.';
+    });
+    _react('💤');
+    _updateOutcome();
+  }
+
+  void _reset() {
+    _highMoodTimer?.cancel();
+    _highMoodTimer = null;
+    _bounceTimer?.cancel();
+    _reactionTimer?.cancel();
+    setState(() {
+      _happiness = 50;
+      _hunger = 50;
+      _energy = 70;
+      _gameOver = false;
+      _hasWon = false;
+      _bouncing = false;
+      _reaction = null;
+      _feedback = 'Pet reset. Choose an action.';
+    });
+    _startHungerTimer();
+  }
+
+  void _confirmName() {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) return;
+    setState(() {
+      _petName = name;
+      _feedback = 'Name set to $name.';
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  // ---- Short-lived animation helpers ----
+  void _react(String emoji) {
+    _bounceTimer?.cancel(); // newer action replaces older reset
+    _reactionTimer?.cancel();
+    setState(() {
+      _bouncing = true;
+      _reaction = emoji;
+    });
+    _bounceTimer = Timer(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      setState(() => _bouncing = false);
+    });
+    _reactionTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      setState(() => _reaction = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _hungerTimer?.cancel();
+    _highMoodTimer?.cancel();
+    _bounceTimer?.cancel();
+    _reactionTimer?.cancel();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  // ---- UI ----
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final side = min(width - 32, 320.0);
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    final bounceScale = (_bouncing && !reduceMotion) ? 1.12 : 1.0;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Smiley Painter'),
-        actions: [
-          IconButton(
-            tooltip: 'Undo',
-            icon: const Icon(Icons.undo),
-            onPressed: _undoStack.isEmpty ? null : _undo,
-          ),
-        ],
-      ),
-      // ListView scrolls, so nothing overflows on small phones or landscape.
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Center(
-            child: SizedBox(
-              width: side,
-              height: side,
-              child: GestureDetector(
-                onTap: _cycleFace,
-                onLongPress: _randomize,
-                child: CustomPaint(
-                  size: Size.infinite,
-                  painter: SmileyPainter(
-                    mood: _config.mood,
-                    faceColor: _config.faceColor,
-                    type: _config.type,
-                    hat: _config.hat,
-                    glasses: _config.glasses,
-                    mustache: _config.mustache,
+      appBar: AppBar(title: const Text('Digital Pet')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _nameRow(),
+              const SizedBox(height: 16),
+              Center(child: _petImage(reduceMotion, bounceScale)),
+              const SizedBox(height: 8),
+              Center(
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    'Mood: $_moodLabel',
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
               ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Center(
-            child: Text('Tap to change face · long-press to randomize'),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<FaceType>(
-              segments: [
-                for (final t in FaceType.values)
-                  ButtonSegment(value: t, label: Text(t.label)),
-              ],
-              selected: {_config.type},
-              onSelectionChanged: (s) => _selectFace(s.first),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Mood: ${moodLabel(_config.mood)} (${(_config.mood * 100).round()}%)',
-          ),
-          Slider(
-            value: _config.mood,
-            onChangeStart: (_) => _saveForUndo(),
-            onChanged: (v) => setState(
-              () => _config = _config.copyWith(mood: v, clearColor: true),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _accessoryButton(
-                'Hat',
-                Icons.checkroom,
-                _config.hat,
-                () => _toggle(hat: !_config.hat),
+              const SizedBox(height: 8),
+              _speechBubble(reduceMotion),
+              const SizedBox(height: 16),
+              _meter('Happiness', _happiness, Colors.green, reduceMotion),
+              _meter('Hunger', _hunger, Colors.blue, reduceMotion),
+              _meter('Energy', _energy, Colors.orange, reduceMotion),
+              const SizedBox(height: 12),
+              if (_gameOver) _banner('Game over. Press Reset to restart.'),
+              if (_hasWon)
+                _banner(
+                  'You win! Happiness stayed high. Press Reset to play again.',
+                ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  FilledButton(
+                    onPressed: _finished ? null : _play,
+                    child: const Text('Play'),
+                  ),
+                  FilledButton(
+                    onPressed: _finished ? null : _feed,
+                    child: const Text('Feed'),
+                  ),
+                  FilledButton(
+                    onPressed: _finished ? null : _rest,
+                    child: const Text('Rest'),
+                  ),
+                  OutlinedButton(onPressed: _reset, child: const Text('Reset')),
+                ],
               ),
-              _accessoryButton(
-                'Glasses',
-                Icons.visibility,
-                _config.glasses,
-                () => _toggle(glasses: !_config.glasses),
-              ),
-              _accessoryButton(
-                'Mustache',
-                Icons.face,
-                _config.mustache,
-                () => _toggle(mustache: !_config.mustache),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                color: Colors.blueGrey.shade50,
+                child: Text(_feedback),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _nameRow() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _nameController,
+            decoration: const InputDecoration(
+              labelText: 'Pet name',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _confirmName(),
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton(onPressed: _confirmName, child: const Text('Confirm')),
+      ],
+    );
+  }
+
+  Widget _petImage(bool reduceMotion, double bounceScale) {
+    final duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+    return Stack(
+      alignment: Alignment.topCenter,
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedScale(
+          scale: _petScale * bounceScale,
+          duration: duration,
+          curve: Curves.easeOutBack,
+          child: ColorFiltered(
+            colorFilter: ColorFilter.mode(_moodColor, BlendMode.modulate),
+            child: Image.asset(
+              'assets/images/pet.png',
+              width: 180,
+              height: 180,
+              semanticLabel: '$_petName the pet, feeling $_moodLabel',
+              // Fallback so the app still runs before you add a PNG.
+              errorBuilder: (_, __, ___) =>
+                  const Icon(Icons.pets, size: 180, color: Colors.white),
+            ),
+          ),
+        ),
+        Positioned(
+          top: -8,
+          child: AnimatedSlide(
+            offset: _reaction == null || reduceMotion
+                ? Offset.zero
+                : const Offset(0, -0.4),
+            duration: duration,
+            child: AnimatedOpacity(
+              opacity: _reaction == null ? 0 : 1,
+              duration: duration,
+              child: Text(
+                _reaction ?? '',
+                style: const TextStyle(fontSize: 32),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _speechBubble(bool reduceMotion) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black26),
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+      ),
+      child: AnimatedSwitcher(
+        duration: reduceMotion
+            ? Duration.zero
+            : const Duration(milliseconds: 300),
+        child: Text(
+          _petMessage,
+          key: ValueKey(_petMessage),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+
+  Widget _meter(String label, int value, Color color, bool reduceMotion) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(width: 90, child: Text(label)),
+          Expanded(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0, end: value / 100),
+              duration: reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 400),
+              curve: Curves.easeOut,
+              builder: (context, v, _) => LinearProgressIndicator(
+                value: v,
+                minHeight: 12,
+                color: color,
+                semanticsLabel: '$label $value out of 100',
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 40,
+            child: Text('$value', textAlign: TextAlign.right),
           ),
         ],
       ),
     );
   }
 
-  Widget _accessoryButton(
-    String label,
-    IconData icon,
-    bool on,
-    VoidCallback onTap,
-  ) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton.filledTonal(
-          tooltip: label,
-          isSelected: on,
-          icon: Icon(icon),
-          selectedIcon: Icon(icon),
-          onPressed: onTap,
-        ),
-        Text(label),
-      ],
+  Widget _banner(String text) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      color: _hasWon ? Colors.green.shade100 : Colors.red.shade100,
+      child: Text(text, textAlign: TextAlign.center),
     );
   }
 }
