@@ -1,443 +1,363 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
-void main() => runApp(const PetApp());
+import 'database_helper.dart';
 
-class PetApp extends StatelessWidget {
-  const PetApp({super.key});
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final helper = DatabaseHelper();
+  try {
+    await helper.init();
+  } catch (error, stackTrace) {
+    debugPrint('Database initialization failed: $error\n$stackTrace');
+    runApp(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Text(
+              'Could not open local storage. Restart the app and check the logs.',
+            ),
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+  runApp(DirectoryApp(helper: helper));
+}
+
+class DirectoryApp extends StatelessWidget {
+  final DatabaseHelper helper;
+  const DirectoryApp({super.key, required this.helper});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Digital Pet',
-      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
-      home: const PetScreen(),
+      title: 'Fall Festival Roster',
+      home: RosterScreen(helper: helper),
     );
   }
 }
 
-class PetScreen extends StatefulWidget {
-  // Intervals are constructor params so tests can shorten them.
-  // Production values: 30 seconds and 3 minutes.
-  const PetScreen({
-    super.key,
-    this.hungerInterval = const Duration(seconds: 30),
-    this.winDuration = const Duration(minutes: 3),
-  });
-
-  final Duration hungerInterval;
-  final Duration winDuration;
+class RosterScreen extends StatefulWidget {
+  final DatabaseHelper helper;
+  const RosterScreen({super.key, required this.helper});
 
   @override
-  State<PetScreen> createState() => _PetScreenState();
+  State<RosterScreen> createState() => _RosterScreenState();
 }
 
-class _PetScreenState extends State<PetScreen> {
-  // ---- Game state ----
-  String _petName = 'Pip';
-  int _happiness = 50;
-  int _hunger = 50;
-  int _energy = 70;
-  bool _gameOver = false;
-  bool _hasWon = false;
-  String _feedback = 'Choose an action to see which pet values change.';
+class _RosterScreenState extends State<RosterScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _ageController = TextEditingController();
 
-  // ---- Timers and short-lived animation state ----
-  Timer? _hungerTimer;
-  Timer? _highMoodTimer;
-  Timer? _bounceTimer;
-  Timer? _reactionTimer;
-  bool _bouncing = false;
-  String? _reaction;
-
-  final TextEditingController _nameController = TextEditingController(
-    text: 'Pip',
-  );
-
-  // ---- Rules ----
-  int _clampMeter(int value) => value.clamp(0, 100).toInt();
-
-  bool get _finished => _gameOver || _hasWon;
-
-  String get _moodLabel {
-    if (_happiness > 70) return 'Happy';
-    if (_happiness >= 30) return 'Neutral';
-    return 'Unhappy';
-  }
-
-  Color get _moodColor {
-    if (_happiness > 70) return Colors.green;
-    if (_happiness >= 30) return Colors.yellow;
-    return Colors.red;
-  }
-
-  double get _petScale => _happiness > 70
-      ? 1.06
-      : _happiness < 30
-      ? 0.94
-      : 1.0;
-
-  // Derived, never stored, so it can't drift out of sync.
-  String get _petMessage {
-    if (_gameOver) return 'I need a rest.';
-    if (_hasWon) return 'Best day ever!';
-    if (_hunger > 80) return "I'm starving!";
-    if (_happiness <= 30) return 'Play with me?';
-    if (_energy < 20) return 'So sleepy...';
-    return "Hi, I'm $_petName!";
-  }
+  List<Map<String, dynamic>> _rows = [];
+  int _count = 0;
+  bool _loading = true;
+  bool _busy = false;
+  String? _readError;
+  String? _feedback;
+  int? _selectedId;
 
   @override
   void initState() {
     super.initState();
-    _startHungerTimer();
-  }
-
-  void _startHungerTimer() {
-    _hungerTimer?.cancel(); // guarantees exactly one hunger timer
-    _hungerTimer = Timer.periodic(widget.hungerInterval, (timer) {
-      if (!mounted || _finished) {
-        timer.cancel();
-        return;
-      }
-      setState(() {
-        if (_hunger + 5 > 100) {
-          _hunger = 100;
-          _happiness = _clampMeter(_happiness - 20);
-        } else {
-          _hunger += 5;
-        }
-      });
-      _updateOutcome();
-    });
-  }
-
-  void _updateOutcome() {
-    if (_finished) return;
-
-    if (_hunger == 100 && _happiness <= 10) {
-      _highMoodTimer?.cancel();
-      _highMoodTimer = null;
-      _hungerTimer?.cancel();
-      setState(() => _gameOver = true);
-      return;
-    }
-
-    if (_happiness <= 80) {
-      _highMoodTimer?.cancel();
-      _highMoodTimer = null;
-      return;
-    }
-
-    _highMoodTimer ??= Timer(widget.winDuration, () {
-      _highMoodTimer = null;
-      if (!mounted || _gameOver || _happiness <= 80) return;
-      _hungerTimer?.cancel();
-      setState(() => _hasWon = true);
-    });
-  }
-
-  // ---- Actions ----
-  void _play() {
-    if (_finished) return;
-    if (_energy < 10) {
-      setState(() => _feedback = 'Too tired to play. Try Rest first.');
-      _react('💤');
-      return;
-    }
-    final nextHappiness = _clampMeter(_happiness + 15);
-    final nextEnergy = _clampMeter(_energy - 15);
-    final nextHunger = _clampMeter(_hunger + 10);
-    setState(() {
-      _happiness = nextHappiness;
-      _energy = nextEnergy;
-      _hunger = nextHunger;
-      _feedback = 'Play: happiness +15, energy -15, hunger +10.';
-    });
-    _react('🎾');
-    _updateOutcome();
-  }
-
-  void _feed() {
-    if (_finished) return;
-    final nextHunger = _clampMeter(_hunger - 10);
-    final change = nextHunger < 30 ? -20 : 10; // overfed pets get cranky
-    final nextHappiness = _clampMeter(_happiness + change);
-    setState(() {
-      _hunger = nextHunger;
-      _happiness = nextHappiness;
-      _feedback = change > 0
-          ? 'Feed: hunger -10, happiness +10.'
-          : 'Feed: hunger -10, but too full! Happiness -20.';
-    });
-    _react('🍖');
-    _updateOutcome();
-  }
-
-  void _rest() {
-    if (_finished) return;
-    final nextEnergy = _clampMeter(_energy + 25);
-    final nextHunger = _clampMeter(_hunger + 5);
-    setState(() {
-      _energy = nextEnergy;
-      _hunger = nextHunger;
-      _feedback = 'Rest: energy +25, hunger +5.';
-    });
-    _react('💤');
-    _updateOutcome();
-  }
-
-  void _reset() {
-    _highMoodTimer?.cancel();
-    _highMoodTimer = null;
-    _bounceTimer?.cancel();
-    _reactionTimer?.cancel();
-    setState(() {
-      _happiness = 50;
-      _hunger = 50;
-      _energy = 70;
-      _gameOver = false;
-      _hasWon = false;
-      _bouncing = false;
-      _reaction = null;
-      _feedback = 'Pet reset. Choose an action.';
-    });
-    _startHungerTimer();
-  }
-
-  void _confirmName() {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) return;
-    setState(() {
-      _petName = name;
-      _feedback = 'Name set to $name.';
-    });
-    FocusScope.of(context).unfocus();
-  }
-
-  // ---- Short-lived animation helpers ----
-  void _react(String emoji) {
-    _bounceTimer?.cancel(); // newer action replaces older reset
-    _reactionTimer?.cancel();
-    setState(() {
-      _bouncing = true;
-      _reaction = emoji;
-    });
-    _bounceTimer = Timer(const Duration(milliseconds: 200), () {
-      if (!mounted) return;
-      setState(() => _bouncing = false);
-    });
-    _reactionTimer = Timer(const Duration(milliseconds: 900), () {
-      if (!mounted) return;
-      setState(() => _reaction = null);
-    });
+    _load();
   }
 
   @override
   void dispose() {
-    _hungerTimer?.cancel();
-    _highMoodTimer?.cancel();
-    _bounceTimer?.cancel();
-    _reactionTimer?.cancel();
     _nameController.dispose();
+    _ageController.dispose();
     super.dispose();
   }
 
-  // ---- UI ----
-  @override
-  Widget build(BuildContext context) {
-    final reduceMotion = MediaQuery.of(context).disableAnimations;
-    final bounceScale = (_bouncing && !reduceMotion) ? 1.12 : 1.0;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Digital Pet')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _nameRow(),
-              const SizedBox(height: 16),
-              Center(child: _petImage(reduceMotion, bounceScale)),
-              const SizedBox(height: 8),
-              Center(
-                child: Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    'Mood: $_moodLabel',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              _speechBubble(reduceMotion),
-              const SizedBox(height: 16),
-              _meter('Happiness', _happiness, Colors.green, reduceMotion),
-              _meter('Hunger', _hunger, Colors.blue, reduceMotion),
-              _meter('Energy', _energy, Colors.orange, reduceMotion),
-              const SizedBox(height: 12),
-              if (_gameOver) _banner('Game over. Press Reset to restart.'),
-              if (_hasWon)
-                _banner(
-                  'You win! Happiness stayed high. Press Reset to play again.',
-                ),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  FilledButton(
-                    onPressed: _finished ? null : _play,
-                    child: const Text('Play'),
-                  ),
-                  FilledButton(
-                    onPressed: _finished ? null : _feed,
-                    child: const Text('Feed'),
-                  ),
-                  FilledButton(
-                    onPressed: _finished ? null : _rest,
-                    child: const Text('Rest'),
-                  ),
-                  OutlinedButton(onPressed: _reset, child: const Text('Reset')),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                color: Colors.blueGrey.shade50,
-                child: Text(_feedback),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  // Reads rows + count. Returns true on success.
+  Future<bool> _load() async {
+    if (mounted) setState(() => _loading = true);
+    try {
+      final rows = await widget.helper.queryAllRows();
+      final count = await widget.helper.queryRowCount();
+      if (!mounted) return false;
+      setState(() {
+        _rows = rows;
+        _count = count;
+        _readError = null;
+        _loading = false;
+      });
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint('Read failed: $error\n$stackTrace');
+      if (!mounted) return false;
+      setState(() {
+        _readError = 'Could not read the roster. Tap Refresh to retry.';
+        _loading = false;
+      });
+      return false;
+    }
   }
 
-  Widget _nameRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: _nameController,
-            decoration: const InputDecoration(
-              labelText: 'Pet name',
-              border: OutlineInputBorder(),
-            ),
-            onSubmitted: (_) => _confirmName(),
-          ),
-        ),
-        const SizedBox(width: 8),
-        FilledButton(onPressed: _confirmName, child: const Text('Confirm')),
-      ],
-    );
+  Future<void> _onRefresh() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
-  Widget _petImage(bool reduceMotion, double bounceScale) {
-    final duration = reduceMotion
-        ? Duration.zero
-        : const Duration(milliseconds: 180);
-    return Stack(
-      alignment: Alignment.topCenter,
-      clipBehavior: Clip.none,
-      children: [
-        AnimatedScale(
-          scale: _petScale * bounceScale,
-          duration: duration,
-          curve: Curves.easeOutBack,
-          child: ColorFiltered(
-            colorFilter: ColorFilter.mode(_moodColor, BlendMode.modulate),
-            child: Image.asset(
-              'assets/images/pet.png',
-              width: 180,
-              height: 180,
-              semanticLabel: '$_petName the pet, feeling $_moodLabel',
-              // Fallback so the app still runs before you add a PNG.
-              errorBuilder: (_, __, ___) =>
-                  const Icon(Icons.pets, size: 180, color: Colors.white),
-            ),
-          ),
-        ),
-        Positioned(
-          top: -8,
-          child: AnimatedSlide(
-            offset: _reaction == null || reduceMotion
-                ? Offset.zero
-                : const Offset(0, -0.4),
-            duration: duration,
-            child: AnimatedOpacity(
-              opacity: _reaction == null ? 0 : 1,
-              duration: duration,
-              child: Text(
-                _reaction ?? '',
-                style: const TextStyle(fontSize: 32),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
+  String? _validateName(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Name is required.';
+    return null;
   }
 
-  Widget _speechBubble(bool reduceMotion) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.black26),
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.white,
-      ),
-      child: AnimatedSwitcher(
-        duration: reduceMotion
-            ? Duration.zero
-            : const Duration(milliseconds: 300),
-        child: Text(
-          _petMessage,
-          key: ValueKey(_petMessage),
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
+  String? _validateAge(String? value) {
+    final age = int.tryParse((value ?? '').trim());
+    if (age == null) return 'Age must be a whole number.';
+    if (age < 0 || age > 130) return 'Age must be from 0 to 130.';
+    return null;
   }
 
-  Widget _meter(String label, int value, Color color, bool reduceMotion) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          SizedBox(width: 90, child: Text(label)),
-          Expanded(
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0, end: value / 100),
-              duration: reduceMotion
-                  ? Duration.zero
-                  : const Duration(milliseconds: 400),
-              curve: Curves.easeOut,
-              builder: (context, v, _) => LinearProgressIndicator(
-                value: v,
-                minHeight: 12,
-                color: color,
-                semanticsLabel: '$label $value out of 100',
-              ),
-            ),
+  void _clearForm() {
+    _nameController.clear();
+    _ageController.clear();
+    _selectedId = null;
+  }
+
+  Future<void> _onSave() async {
+    if (_busy) return;
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      setState(() => _feedback = 'Invalid input. Nothing was saved.');
+      return;
+    }
+    final name = _nameController.text.trim();
+    final age = int.parse(_ageController.text.trim());
+    final editingId = _selectedId;
+
+    setState(() {
+      _busy = true;
+      _feedback = null;
+    });
+
+    String message;
+    bool writeSucceeded = false;
+    try {
+      if (editingId == null) {
+        final id = await widget.helper.insert({
+          DatabaseHelper.columnName: name,
+          DatabaseHelper.columnAge: age,
+        });
+        message = 'Added $name (age $age) with ID $id.';
+        writeSucceeded = true;
+      } else {
+        final updated = await widget.helper.update({
+          DatabaseHelper.columnId: editingId,
+          DatabaseHelper.columnName: name,
+          DatabaseHelper.columnAge: age,
+        });
+        if (updated == 1) {
+          message = 'Updated ID $editingId. Rows affected: $updated.';
+          writeSucceeded = true;
+        } else {
+          message = 'ID $editingId was not found (rows affected: $updated).';
+          // Row is gone; drop the stale edit selection.
+          writeSucceeded = true;
+        }
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Write failed: $error\n$stackTrace');
+      message = 'Could not save. Your input was kept. Please try again.';
+    }
+
+    if (!mounted) return;
+    if (writeSucceeded) {
+      _formKey.currentState?.reset();
+      _clearForm();
+    }
+    final refreshed = await _load();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _feedback = (writeSucceeded && !refreshed)
+          ? 'Saved, but refresh failed. Tap Refresh.'
+          : message;
+    });
+  }
+
+  void _onEdit(Map<String, dynamic> row) {
+    if (_busy) return;
+    setState(() {
+      _selectedId = row[DatabaseHelper.columnId] as int;
+      _nameController.text = row[DatabaseHelper.columnName] as String;
+      _ageController.text = '${row[DatabaseHelper.columnAge]}';
+      _feedback = 'Editing ID $_selectedId.';
+    });
+  }
+
+  void _onCancelEdit() {
+    if (_busy) return;
+    setState(() {
+      _formKey.currentState?.reset();
+      _clearForm();
+      _feedback = 'Edit cancelled. Nothing was written.';
+    });
+  }
+
+  Future<void> _onDelete(Map<String, dynamic> row) async {
+    if (_busy) return;
+    final id = row[DatabaseHelper.columnId] as int;
+    final name = row[DatabaseHelper.columnName];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete guest?'),
+        content: Text('Delete ID $id ($name)? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
           ),
-          SizedBox(
-            width: 40,
-            child: Text('$value', textAlign: TextAlign.right),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
           ),
         ],
       ),
     );
+    if (confirmed != true || !mounted) {
+      if (mounted) {
+        setState(() => _feedback = 'Delete cancelled. Nothing was written.');
+      }
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _feedback = null;
+    });
+    String message;
+    try {
+      final deleted = await widget.helper.delete(id);
+      if (deleted == 1) {
+        message = 'Deleted ID $id. Rows affected: $deleted.';
+      } else {
+        message = 'ID $id was not found (rows affected: $deleted).';
+      }
+      if (_selectedId == id) {
+        _formKey.currentState?.reset();
+        _clearForm();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Delete failed: $error\n$stackTrace');
+      message = 'Could not delete. Please try again.';
+    }
+    final refreshed = await _load();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _feedback = refreshed ? message : '$message Refresh failed. Tap Refresh.';
+    });
   }
 
-  Widget _banner(String text) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      color: _hasWon ? Colors.green.shade100 : Colors.red.shade100,
-      child: Text(text, textAlign: TextAlign.center),
+  Widget _buildList() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_readError != null) {
+      return Center(child: Text(_readError!));
+    }
+    if (_rows.isEmpty) {
+      return const Center(
+        child: Text('No festival guests yet. Add the first one!'),
+      );
+    }
+    return ListView.builder(
+      itemCount: _rows.length,
+      itemBuilder: (context, i) {
+        final row = _rows[i];
+        final id = row[DatabaseHelper.columnId];
+        return ListTile(
+          title: Text('${row[DatabaseHelper.columnName]}'),
+          subtitle: Text('ID: $id  |  Age: ${row[DatabaseHelper.columnAge]}'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(
+                onPressed: _busy ? null : () => _onEdit(row),
+                child: const Text('Edit'),
+              ),
+              TextButton(
+                onPressed: _busy ? null : () => _onDelete(row),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Fall Festival Roster')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  TextFormField(
+                    controller: _nameController,
+                    enabled: !_busy,
+                    decoration: const InputDecoration(labelText: 'Name'),
+                    validator: _validateName,
+                  ),
+                  TextFormField(
+                    controller: _ageController,
+                    enabled: !_busy,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Age'),
+                    validator: _validateAge,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              children: [
+                ElevatedButton(
+                  onPressed: _busy ? null : _onSave,
+                  child: Text(_selectedId == null ? 'Add' : 'Save'),
+                ),
+                OutlinedButton(
+                  onPressed: (_busy || _selectedId == null)
+                      ? null
+                      : _onCancelEdit,
+                  child: const Text('Cancel edit'),
+                ),
+                OutlinedButton(
+                  onPressed: _busy ? null : _onRefresh,
+                  child: const Text('Refresh'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Guests: $_count',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            if (_feedback != null) Text(_feedback!),
+            const Divider(),
+            Expanded(child: _buildList()),
+          ],
+        ),
+      ),
     );
   }
 }
