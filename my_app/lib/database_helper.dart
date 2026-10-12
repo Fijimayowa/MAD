@@ -12,6 +12,8 @@ class DatabaseHelper {
 
   Database? _db;
 
+  // Called once from main() before runApp. Throws if the DB can't be opened,
+  // which main() catches and shows as the "Could not open local storage" screen.
   Future<void> init() async {
     if (_db != null) return;
     final path = join(await getDatabasesPath(), _databaseName);
