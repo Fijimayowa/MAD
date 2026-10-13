@@ -1,9 +1,11 @@
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
+import 'models.dart';
+
 class DatabaseHelper {
   static const _databaseName = 'roster.db';
-  static const _databaseVersion = 1;
+  static const _databaseVersion = 2;
 
   static const table = 'roster';
   static const columnId = 'id';
@@ -12,23 +14,58 @@ class DatabaseHelper {
 
   Database? _db;
 
-  // Called once from main() before runApp. Throws if the DB can't be opened,
-  // which main() catches and shows as the "Could not open local storage" screen.
   Future<void> init() async {
     if (_db != null) return;
     final path = join(await getDatabasesPath(), _databaseName);
     _db = await openDatabase(
       path,
       version: _databaseVersion,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE $table (
-            $columnId INTEGER PRIMARY KEY AUTOINCREMENT,
-            $columnName TEXT NOT NULL,
-            $columnAge INTEGER NOT NULL
-          )
-        ''');
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
       },
+      onCreate: (db, version) async {
+        await _createPartOneTables(db);
+        await _createCatalogueTables(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await _createCatalogueTables(db);
+        }
+      },
+    );
+  }
+
+  Future<void> _createPartOneTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE $table (
+        $columnId INTEGER PRIMARY KEY AUTOINCREMENT,
+        $columnName TEXT NOT NULL,
+        $columnAge INTEGER NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _createCatalogueTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE cards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        suit TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        image_ref TEXT,
+        folder_id INTEGER NOT NULL,
+        FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_cards_folder_id ON cards(folder_id)',
     );
   }
 
@@ -40,6 +77,7 @@ class DatabaseHelper {
     return db;
   }
 
+  // Part I: guest roster
   Future<int> insert(Map<String, dynamic> row) async {
     return _database.insert(table, row);
   }
@@ -65,5 +103,92 @@ class DatabaseHelper {
 
   Future<int> delete(int id) async {
     return _database.delete(table, where: '$columnId = ?', whereArgs: [id]);
+  }
+
+  // Part II: folders
+  Future<int> insertFolder(String name) async {
+    try {
+      return await _database.insert('folders', {
+        'name': name,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } on DatabaseException catch (error) {
+      if (error.isUniqueConstraintError()) {
+        throw DuplicateFolderException(name);
+      }
+      rethrow;
+    }
+  }
+
+  Future<List<Folder>> getFoldersWithCounts() async {
+    final rows = await _database.rawQuery('''
+      SELECT f.id, f.name, f.created_at, COUNT(c.id) AS card_count
+      FROM folders f
+      LEFT JOIN cards c ON c.folder_id = f.id
+      GROUP BY f.id
+      ORDER BY f.name COLLATE NOCASE ASC, f.id ASC
+    ''');
+    return rows.map(Folder.fromMap).toList();
+  }
+
+  Future<int> deleteFolder(int id) async {
+    return _database.delete('folders', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // Part II: cards
+  Future<List<CardRecord>> getCards(int folderId) async {
+    final rows = await _database.query(
+      'cards',
+      where: 'folder_id = ?',
+      whereArgs: [folderId],
+      orderBy: 'title COLLATE NOCASE ASC, id ASC',
+    );
+    return rows.map(CardRecord.fromMap).toList();
+  }
+
+  Future<int> insertCard(CardRecord card) async {
+    return _database.insert('cards', card.toMap());
+  }
+
+  Future<int> updateCard(CardRecord card) async {
+    return _database.update(
+      'cards',
+      card.toMap(),
+      where: 'id = ?',
+      whereArgs: [card.id],
+    );
+  }
+
+  Future<int> deleteCard(int id) async {
+    return _database.delete('cards', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // Read-only diagnostics for T1 evidence
+  Future<String> diagnostics() async {
+    final db = _database;
+    final version =
+        Sqflite.firstIntValue(await db.rawQuery('PRAGMA user_version'));
+    final fk = Sqflite.firstIntValue(await db.rawQuery('PRAGMA foreign_keys'));
+    final fkList = await db.rawQuery('PRAGMA foreign_key_list(cards)');
+    final idxList = await db.rawQuery('PRAGMA index_list(cards)');
+    final guests = await db.query(table, orderBy: '$columnId ASC');
+    final folderCount = Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM folders'));
+    final cardCount =
+        Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM cards'));
+
+    final buffer = StringBuffer()
+      ..writeln('PRAGMA user_version: $version')
+      ..writeln('PRAGMA foreign_keys: $fk')
+      ..writeln('foreign_key_list(cards): $fkList')
+      ..writeln('index_list(cards): $idxList')
+      ..writeln('Part I roster rows (${guests.length}):');
+    for (final row in guests) {
+      buffer.writeln('  $row');
+    }
+    buffer
+      ..writeln('folders: $folderCount')
+      ..writeln('cards: $cardCount');
+    return buffer.toString();
   }
 }
