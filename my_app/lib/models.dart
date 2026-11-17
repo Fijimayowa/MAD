@@ -1,89 +1,85 @@
-const List<String> kSuits = ['Hearts', 'Diamonds', 'Clubs', 'Spades'];
+import 'dart:math';
+import 'package:html_unescape/html_unescape.dart';
 
-String suitSymbol(String suit) {
-  switch (suit) {
-    case 'Hearts':
-      return '\u2665';
-    case 'Diamonds':
-      return '\u2666';
-    case 'Clubs':
-      return '\u2663';
-    case 'Spades':
-      return '\u2660';
-    default:
-      return '?';
-  }
-}
-
-/// Thrown by the helper when a folder name violates the UNIQUE constraint.
-class DuplicateFolderException implements Exception {
-  final String name;
-  const DuplicateFolderException(this.name);
-
+/// Thrown when OpenTDB data fails HTTP/API/schema validation.
+class ApiException implements Exception {
+  final String message;
+  ApiException(this.message);
   @override
-  String toString() => 'DuplicateFolderException: "$name" already exists';
+  String toString() => message;
 }
 
-class Folder {
-  final int id;
-  final String name;
-  final String createdAt; // ISO-8601
-  final int cardCount;
+final _unescape = HtmlUnescape();
 
-  const Folder({
-    required this.id,
-    required this.name,
-    required this.createdAt,
-    required this.cardCount,
-  });
+class Question {
+  final String text;
+  final String correct;
 
-  factory Folder.fromMap(Map<String, dynamic> map) {
-    return Folder(
-      id: map['id'] as int,
-      name: map['name'] as String,
-      createdAt: map['created_at'] as String,
-      cardCount: (map['card_count'] as int?) ?? 0,
-    );
+  /// Shuffled ONCE at parse time, never inside build().
+  final List<String> choices;
+
+  Question._(this.text, this.correct, this.choices);
+
+  factory Question.fromJson(Map<String, dynamic> j, Random rng) {
+    String need(String key) {
+      final v = j[key];
+      if (v is! String || v.trim().isEmpty) {
+        throw ApiException('Question field "$key" is missing or empty');
+      }
+      return _unescape.convert(v).trim();
+    }
+
+    if (need('category') != 'General Knowledge') {
+      throw ApiException('Question is not General Knowledge');
+    }
+    if (need('difficulty') != 'easy') throw ApiException('Question is not easy');
+    if (need('type') != 'multiple') throw ApiException('Question is not multiple choice');
+
+    final text = need('question');
+    final correct = need('correct_answer');
+    final wrongRaw = j['incorrect_answers'];
+    if (wrongRaw is! List || wrongRaw.length != 3) {
+      throw ApiException('Question needs exactly 3 incorrect answers');
+    }
+    final wrong = wrongRaw.map((e) {
+      if (e is! String || e.trim().isEmpty) {
+        throw ApiException('Empty incorrect answer');
+      }
+      return _unescape.convert(e).trim();
+    }).toList();
+
+    final all = [correct, ...wrong];
+    if (all.toSet().length != 4 || all.any((c) => c.isEmpty)) {
+      throw ApiException('Duplicate or empty answer choices');
+    }
+    all.shuffle(rng);
+    return Question._(text, correct, List.unmodifiable(all));
   }
-
-  Map<String, dynamic> toMap() => {'name': name, 'created_at': createdAt};
 }
 
-class CardRecord {
-  final int? id;
-  final String title;
-  final String suit;
-  final String notes;
-  final String? imageRef;
-  final int folderId;
+/// What the repository saves. Exactly these fields plus the server timestamp.
+class AttemptData {
+  static const schemaVersion = 1;
+  static const variant = 'A';
+  static const categoryId = 9;
+  static const questionCount = 10;
 
-  const CardRecord({
-    this.id,
-    required this.title,
-    required this.suit,
-    this.notes = '',
-    this.imageRef,
-    required this.folderId,
-  });
+  final int correctCount;
+  AttemptData(this.correctCount);
 
-  factory CardRecord.fromMap(Map<String, dynamic> map) {
-    return CardRecord(
-      id: map['id'] as int,
-      title: map['title'] as String,
-      suit: map['suit'] as String,
-      notes: (map['notes'] as String?) ?? '',
-      imageRef: map['image_ref'] as String?,
-      folderId: map['folder_id'] as int,
-    );
-  }
-
-  /// Does not include the id: inserts let SQLite assign it, and updates
-  /// target the row with WHERE id = ?.
-  Map<String, dynamic> toMap() => {
-        'title': title,
-        'suit': suit,
-        'notes': notes,
-        'image_ref': imageRef,
-        'folder_id': folderId,
+  Map<String, Object?> fixedFields() => {
+        'schemaVersion': schemaVersion,
+        'variant': variant,
+        'categoryId': categoryId,
+        'questionCount': questionCount,
+        'correctCount': correctCount,
       };
+}
+
+/// A document read back from the server.
+class SavedAttempt {
+  final String path;
+  final Map<String, Object?> data;
+  final DateTime submittedAt;
+  SavedAttempt(this.path, this.data, this.submittedAt);
 }

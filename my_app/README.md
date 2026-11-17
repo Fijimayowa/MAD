@@ -1,21 +1,54 @@
-Name: Femi Ijimayowa (working alone, team of one) Track: Undergraduate Task:
+# ICA16 Class A: General Knowledge cloud-backed round
 
-Question 1: Trace the tip feature from button tap to displayed text
+Flutter app: Open Trivia DB questions, Firebase Auth sign-in, one immutable score
+document per round in Cloud Firestore, read back with a server-only read.
 
-When I tap "Get a signup tip," the \_loadTip() method runs. It sets \_tipStatus to loading and calls setState, so Flutter rebuilds the screen. The button disappears and a spinning circle (CircularProgressIndicator) shows in its place. After about one second the service returns the tip, the text is cut to 240 characters, and \_tipStatus becomes success. The screen then shows a label saying it is a mock tip and the tip text, plus a "New tip" button.
+## Setup (no credentials are stored in this repo)
 
-If anything goes wrong, the catch block sets \_tipStatus to error. The screen then shows "Couldn't get a tip right now." and a Retry button. Tapping Retry runs \_loadTip() again, so the user can try again without restarting the app.
+1. Create a Firebase project (or use the instructor-approved one).
+2. Firestore: create a **Standard edition, Native mode** database in **production mode**.
+3. Authentication: enable **Email/Password**. Create two test users (A and B) in the console.
+   Share their passwords only through the instructor-approved private channel.
+4. In a new Flutter project, copy `lib/`, `firestore.rules` and the dependencies below.
+5. From the project root:
 
-Question 2: Why validation must stay local
+```
+flutter pub add http html_unescape firebase_core firebase_auth cloud_firestore
+firebase login
+dart pub global activate flutterfire_cli
+flutterfire configure        # choose the real Android app; generates lib/firebase_options.dart
+firebase init firestore      # point it at firestore.rules (do NOT overwrite with open rules)
+firebase deploy --only firestore:rules
+```
 
-Validation has to stay on the device because it is a set of fixed rules (is there an "@", is the password at least 6 characters), and those rules should give the same answer every time. An AI can be wrong, slow, offline, or tricked by the text it receives. If signup depended on the AI, nobody could sign up when the AI was down.
+6. Add to `android/app/src/main/AndroidManifest.xml` (inside `<manifest>`, above `<application>`):
+   `<uses-permission android:name="android.permission.INTERNET"/>`
+7. Fully rebuild after native changes: `flutter clean && flutter run`.
 
-A bad decision would be the AI approving a signup with an email like "hello" and a password like "1". The account would be created with an email that can't receive messages and a password that is easy to guess. That is why the AI is only allowed to give a tip and the local validators make the real decision.
+## Data contract
 
-What the app does
+Path: `users/{uid}/attempts/{roundId}`. Exactly six fields:
+`schemaVersion` (1), `variant` ("A"), `categoryId` (9), `questionCount` (10),
+`correctCount` (0-10), `submittedAt` (server timestamp). Rules forbid updates and deletes.
 
-A signup screen with Full Name, Email, and Password fields. Each field checks its own input on the device. If everything is valid, a green message appears. There is also a "Get a signup tip" button that shows a short password tip.
+## Design notes
 
-Visual theme choice: I replaced the old primarySwatch with ColorScheme.fromSeed(seedColor: Colors.purple), which builds a Material 3 color scheme from one purple color.
+- Round ID is created once per round with `attempts.doc().id` and reused on every retry.
+- Save = Firestore transaction (read first; create if absent; reuse if matching; collision if different).
+- After the transaction, a `Source.server` read verifies existence and all fields before showing "Cloud verified".
+- Lost acknowledgement -> `saveUnknown` -> "Check server" reads the same round ID.
+- Retry policy: user-triggered only; at least 5 s between OpenTDB requests; one submission at a time;
+  replay and sign-out disabled while a save is unresolved.
+- Debug builds include a clearly labeled fault-injection panel (T03, T09, T12). It is hidden in release builds.
 
-AI use note: I used AI to grammatically fix my sentences (Clauide)
+## Finding the record (restart test, T07)
+
+After signing in as the same user, paste the saved round ID into "Retrieve a saved attempt by round ID".
+A grader with console access can find it at `users/<uid>/attempts/<roundId>` (redacted in the evidence document).
+
+## Build
+
+```
+flutter build apk --release
+# build/app/outputs/flutter-apk/app-release.apk  ->  rename to ICA16_A_YourName.apk
+```

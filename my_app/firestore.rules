@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // One completed round, one immutable document, owned by the signed-in user.
+    match /users/{uid}/attempts/{roundId} {
+
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(
+             ['schemaVersion', 'variant', 'categoryId', 'questionCount', 'correctCount', 'submittedAt'])
+        && request.resource.data.keys().hasAll(
+             ['schemaVersion', 'variant', 'categoryId', 'questionCount', 'correctCount', 'submittedAt'])
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.variant == 'A'
+        && request.resource.data.categoryId is int
+        && request.resource.data.categoryId == 9
+        && request.resource.data.questionCount is int
+        && request.resource.data.questionCount == 10
+        && request.resource.data.correctCount is int
+        && request.resource.data.correctCount >= 0
+        && request.resource.data.correctCount <= 10
+        && request.resource.data.submittedAt == request.time;
+
+      // Immutable: no updates, no deletes.
+      allow update, delete: if false;
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

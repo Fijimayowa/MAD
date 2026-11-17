@@ -37,10 +37,11 @@ dependencies:
   sqflite: ^2.4.4+1
   path: ^1.9.1
   http: ^1.6.0
-  firebase_core: ^5.1.0
-  cloud_firestore: ^7.1.0
-  firebase_auth: ^7.0.1
+  firebase_core: ^5.2.0
+  cloud_firestore: ^7.2.0
+  firebase_auth: ^7.1.0
   firebase_messaging: ^17.0.1
+  html_unescape: ^2.0.0
 
 dev_dependencies:
   flutter_test:
